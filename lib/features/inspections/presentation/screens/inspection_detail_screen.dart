@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/app_colors.dart';
@@ -6,10 +5,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/status_badge.dart';
 import '../../../../core/network/providers.dart';
 import '../../../../models/inspection_model.dart';
-import '../../../../models/certificate_model.dart';
-import '../../../../models/instrument_model.dart';
 import '../../../../models/application_model.dart';
-import '../../../instruments/presentation/controllers/instruments_controller.dart';
 import '../../../applications/presentation/controllers/applications_controller.dart';
 
 class InspectionDetailScreen extends ConsumerStatefulWidget {
@@ -49,48 +45,42 @@ class _InspectionDetailScreenState extends ConsumerState<InspectionDetailScreen>
     setState(() => _isCompleting = true);
 
     try {
-      final certRepo = ref.read(certificateRepositoryProvider);
-      final randomNum = 10000 + Random().nextInt(90000);
-      final certNumber = 'LM-CERT-2026-$randomNum';
-      final qrCode = 'VERIFY-LM-${randomNum.toString().substring(0, 4)}A';
-
       if (status == InspectionStatus.passed) {
-        // Generate Certificate
-        final newCert = CertificateModel(
-          id: 'cert-$randomNum',
-          certificateNumber: certNumber,
-          instrumentId: widget.inspection.instrumentId,
-          instrumentUniqueId: widget.inspection.instrumentUniqueId,
-          instrumentType: widget.inspection.instrumentType,
-          serialNumber: 'SN-$randomNum',
-          manufacturer: 'Avery India Ltd',
-          model: 'EWS-30P',
-          capacity: 30.0,
-          unit: 'kg',
-          ownerName: 'Rahul Verma',
-          ownerAddress: 'Main Market, Kothrud, Pune - 411038',
-          verificationDate: DateTime.now(),
-          issueDate: DateTime.now(),
-          validUntil: DateTime.now().add(const Duration(days: 365)),
-          issuingOfficerName: widget.inspection.officerName,
-          issuingAuthority: 'Legal Metrology Department, Pune Beat II',
-          qrVerificationCode: qrCode,
-          sha256IntegrityHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-          status: CertificateStatus.valid,
-          remarks: _remarksController.text.trim(),
-        );
+        // Complete inspection
+        await ref.read(inspectionRepositoryProvider).completeInspection(
+              widget.inspection.id,
+              InspectionStatus.passed,
+              remarks: _remarksController.text.trim(),
+              checklist: _checklist,
+            );
 
-        await certRepo.generateCertificate(newCert);
-
-        // Update Instrument and Application status
-        ref.read(instrumentsControllerProvider.notifier).updateInstrumentStatus(
-              widget.inspection.instrumentId,
-              InstrumentStatus.verified,
+        // Forward application to Administrator
+        await ref.read(applicationRepositoryProvider).reviewApplication(
+              widget.inspection.applicationId,
+              remarks: 'Inspected and verified by ${widget.inspection.officerName}. Verified compliant with Legal Metrology (General) Rules, 2011. Forwarded to Administrator for approval.',
             );
 
         ref.read(applicationsControllerProvider.notifier).updateApplicationStatus(
               widget.inspection.applicationId,
-              ApplicationStatus.certificateIssued,
+              ApplicationStatus.inspectionCompleted,
+            );
+      } else {
+        // Failed inspection
+        await ref.read(inspectionRepositoryProvider).completeInspection(
+              widget.inspection.id,
+              InspectionStatus.failed,
+              remarks: _remarksController.text.trim(),
+              checklist: _checklist,
+            );
+
+        await ref.read(applicationRepositoryProvider).rejectApplication(
+              widget.inspection.applicationId,
+              remarks: 'Inspection failed: ${_remarksController.text.trim()}',
+            );
+
+        ref.read(applicationsControllerProvider.notifier).updateApplicationStatus(
+              widget.inspection.applicationId,
+              ApplicationStatus.rejected,
             );
       }
 
@@ -98,14 +88,26 @@ class _InspectionDetailScreenState extends ConsumerState<InspectionDetailScreen>
         setState(() => _isCompleting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: AppColors.success,
-            content: Text('✓ Inspection ${widget.inspection.inspectionId} Completed & Signed Off!'),
+            backgroundColor: status == InspectionStatus.passed ? AppColors.success : AppColors.error,
+            content: Text(
+              status == InspectionStatus.passed
+                  ? '✓ Inspection ${widget.inspection.inspectionId} verified & forwarded to Administrator!'
+                  : '✕ Inspection ${widget.inspection.inspectionId} marked as Failed.',
+            ),
           ),
         );
         Navigator.pop(context, true);
       }
-    } catch (_) {
-      if (mounted) setState(() => _isCompleting = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isCompleting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppColors.error,
+            content: Text('Failed to complete inspection: $e'),
+          ),
+        );
+      }
     }
   }
 
@@ -259,7 +261,7 @@ class _InspectionDetailScreenState extends ConsumerState<InspectionDetailScreen>
                         onPressed: _isCompleting ? null : () => _completeInspection(InspectionStatus.passed),
                         child: _isCompleting
                             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                            : const Text('Pass & Issue Certificate'),
+                            : const Text('Pass & Forward to Admin'),
                       ),
                     ),
                   ],

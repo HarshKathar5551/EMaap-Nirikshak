@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -10,6 +11,9 @@ import '../../../../core/widgets/offline_banner.dart';
 import '../../../../core/network/providers.dart';
 
 import '../../../../models/instrument_model.dart';
+import '../../../../models/application_model.dart';
+import '../../../../models/certificate_model.dart';
+import '../../../../models/user_model.dart';
 
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../instruments/presentation/controllers/instruments_controller.dart';
@@ -19,6 +23,7 @@ import '../../../instruments/presentation/widgets/add_instrument_dialog.dart';
 import '../../../instruments/presentation/widgets/apply_verification_dialog.dart';
 
 import '../../../certificates/presentation/screens/certificate_view_screen.dart';
+import 'public_verification_screen.dart';
 
 class OwnerDashboardScreen extends ConsumerStatefulWidget {
   const OwnerDashboardScreen({super.key});
@@ -31,21 +36,23 @@ class OwnerDashboardScreen extends ConsumerStatefulWidget {
 class _OwnerDashboardScreenState
     extends ConsumerState<OwnerDashboardScreen> {
   DateTime? _lastBackPress;
+  String? _activeUserId;
 
   @override
   void initState() {
     super.initState();
+    final user = ref.read(authControllerProvider).user;
+    _activeUserId = user?.id;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final user = ref.read(authControllerProvider).user;
-
+      final u = ref.read(authControllerProvider).user;
       ref
           .read(instrumentsControllerProvider.notifier)
-          .loadInstruments(ownerId: user?.id);
+          .loadInstruments(ownerId: u?.id);
 
       ref
           .read(applicationsControllerProvider.notifier)
-          .loadApplications(ownerId: user?.id);
+          .loadApplications(ownerId: u?.id);
     });
   }
 
@@ -91,6 +98,10 @@ class _OwnerDashboardScreenState
             .read(instrumentsControllerProvider.notifier)
             .loadInstruments(ownerId: user?.id);
 
+        await ref
+            .read(applicationsControllerProvider.notifier)
+            .loadApplications(ownerId: user?.id);
+
         if (!mounted) return;
 
         setState(() {});
@@ -98,7 +109,7 @@ class _OwnerDashboardScreenState
         messenger.showSnackBar(
           SnackBar(
             backgroundColor: AppColors.success,
-            duration: const Duration(seconds: 4),
+            duration: const Duration(seconds: 5),
             content: Row(
               children: [
                 const Icon(
@@ -114,14 +125,14 @@ class _OwnerDashboardScreenState
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const Text(
-                        'Instrument Registered Successfully!',
+                        'Registered & Sent to LMO for Verification!',
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           color: Colors.white,
                         ),
                       ),
                       Text(
-                        '${created.instrumentId} • ${created.type}',
+                        '${created.instrumentId} • Verification application forwarded to Inspector Vikram Patil (LMO).',
                         style: const TextStyle(
                           fontSize: 11,
                           color: Colors.white70,
@@ -134,6 +145,9 @@ class _OwnerDashboardScreenState
             ),
           ),
         );
+
+        // Immediately open the newly generated Unique Product QR Code
+        _showProductQrDialog(created);
       }
     } catch (e, st) {
       debugPrint(
@@ -151,6 +165,338 @@ class _OwnerDashboardScreenState
         );
       }
     }
+  }
+
+  // ============================================================
+  // PRODUCT QR CODE DIALOG
+  // ============================================================
+
+  void _showProductQrDialog(InstrumentModel instrument) {
+    final qrCode = (instrument.qrVerificationCode != null &&
+            instrument.qrVerificationCode!.isNotEmpty)
+        ? instrument.qrVerificationCode!
+        : 'VERIFY-LM-${instrument.instrumentId.replaceAll('LM-IN-', '').replaceAll('-', '')}';
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          clipBehavior: Clip.antiAlias,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [AppColors.primaryDark, AppColors.primary],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(7),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.qr_code_2,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Unique Product QR Code',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              Text(
+                                'National Legal Metrology Portal',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                          onPressed: () => Navigator.of(ctx).pop(),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    instrument.instrumentId,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${instrument.manufacturer} • ${instrument.model}',
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            StatusBadge.fromStatus(instrument.status.displayName),
+                          ],
+                        ),
+
+                        const SizedBox(height: 14),
+
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: AppColors.primary.withValues(alpha: 0.2),
+                              width: 1.5,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primary.withValues(alpha: 0.06),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              QrImageView(
+                                data: qrCode,
+                                version: QrVersions.auto,
+                                size: 180.0,
+                                eyeStyle: const QrEyeStyle(
+                                  eyeShape: QrEyeShape.square,
+                                  color: AppColors.primary,
+                                ),
+                                dataModuleStyle: const QrDataModuleStyle(
+                                  dataModuleShape: QrDataModuleShape.square,
+                                  color: AppColors.primaryDark,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primaryContainer.withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: AppColors.primary.withValues(alpha: 0.2),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.verified, size: 13, color: AppColors.primary),
+                                    const SizedBox(width: 5),
+                                    Flexible(
+                                      child: Text(
+                                        qrCode,
+                                        style: const TextStyle(
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.w800,
+                                          color: AppColors.primary,
+                                          letterSpacing: 0.5,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceMuted,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Column(
+                            children: [
+                              _qrInfoRow('Serial No.', instrument.serialNumber),
+                              const Divider(height: 8),
+                              _qrInfoRow('Capacity', '${instrument.capacity} ${instrument.unit}'),
+                              const Divider(height: 8),
+                              _qrInfoRow(
+                                'Establishment',
+                                instrument.locationName.isNotEmpty
+                                    ? instrument.locationName
+                                    : instrument.address,
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        const Row(
+                          children: [
+                            Icon(Icons.info_outline, size: 13, color: AppColors.textMuted),
+                            SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Affix this QR code to the equipment plaque for field inspection & verification.',
+                                style: TextStyle(fontSize: 10, color: AppColors.textMuted),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 9),
+                                ),
+                                icon: const Icon(Icons.copy, size: 15),
+                                label: const Text('Copy Token', style: TextStyle(fontSize: 11)),
+                                onPressed: () {
+                                  Clipboard.setData(ClipboardData(text: qrCode));
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      backgroundColor: AppColors.primary,
+                                      content: Text('Copied unique QR code: $qrCode'),
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.primary,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 9),
+                                ),
+                                icon: const Icon(Icons.print, size: 15),
+                                label: const Text('Print Plaque', style: TextStyle(fontSize: 11)),
+                                onPressed: () {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      backgroundColor: AppColors.success,
+                                      content: Text('QR Plaque for ${instrument.instrumentId} sent to printer.'),
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: TextButton.icon(
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppColors.secondary,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                            ),
+                            icon: const Icon(Icons.verified_user, size: 16),
+                            label: const Text(
+                              'Verify this QR in Public Portal',
+                              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
+                            ),
+                            onPressed: () {
+                              Navigator.of(ctx).pop();
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => PublicVerificationScreen(initialCode: qrCode),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _qrInfoRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10.5,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+            textAlign: TextAlign.end,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
   }
 
   // ============================================================
@@ -269,6 +615,58 @@ class _OwnerDashboardScreenState
                   ),
                 ),
 
+                const SizedBox(height: 10),
+
+                InkWell(
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _showProductQrDialog(instrument);
+                  },
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceMuted,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.qr_code_2, size: 22, color: AppColors.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'PRODUCT QR VERIFICATION CODE',
+                                style: TextStyle(
+                                  fontSize: 8.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                              Text(
+                                (instrument.qrVerificationCode != null &&
+                                        instrument.qrVerificationCode!.isNotEmpty)
+                                    ? instrument.qrVerificationCode!
+                                    : 'VERIFY-LM-${instrument.instrumentId.replaceAll('LM-IN-', '').replaceAll('-', '')}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right, size: 16, color: AppColors.textMuted),
+                      ],
+                    ),
+                  ),
+                ),
+
                 const SizedBox(height: 14),
 
                 _detailRow(
@@ -361,6 +759,40 @@ class _OwnerDashboardScreenState
             ),
           ),
           actions: [
+            if (instrument.status == InstrumentStatus.verified ||
+                instrument.activeCertificateId != null ||
+                ref.read(applicationsControllerProvider).applications.any((a) =>
+                    (a.instrumentId == instrument.id || a.instrumentUniqueId == instrument.instrumentId) &&
+                    a.status == ApplicationStatus.certificateIssued))
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.success,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  final matchingApp = ref.read(applicationsControllerProvider).applications.cast<ApplicationModel?>().firstWhere(
+                    (a) =>
+                        (a?.instrumentId == instrument.id || a?.instrumentUniqueId == instrument.instrumentId) &&
+                        a?.status == ApplicationStatus.certificateIssued,
+                    orElse: () => null,
+                  );
+                  _viewCertificate(
+                    instrument: instrument,
+                    certificateId: instrument.activeCertificateId ?? matchingApp?.certificateId,
+                    qrCode: instrument.qrVerificationCode,
+                    instrumentUniqueId: instrument.instrumentId,
+                  );
+                },
+                icon: const Icon(
+                  Icons.verified,
+                  size: 16,
+                ),
+                label: const Text(
+                  'View Digital Certificate',
+                ),
+              ),
+
             if (instrument.status ==
                     InstrumentStatus.registered ||
                 instrument.status ==
@@ -386,6 +818,23 @@ class _OwnerDashboardScreenState
                   'Apply Verification',
                 ),
               ),
+
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+              ),
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                _showProductQrDialog(instrument);
+              },
+              icon: const Icon(
+                Icons.qr_code_2,
+                size: 16,
+              ),
+              label: const Text(
+                'Product QR',
+              ),
+            ),
 
             TextButton(
               onPressed: () {
@@ -465,31 +914,193 @@ class _OwnerDashboardScreenState
   // CERTIFICATE
   // ============================================================
 
-  Future<void> _viewCertificate(
-      InstrumentModel instrument) async {
-    final certRepo =
-        ref.read(certificateRepositoryProvider);
+  Future<void> _viewCertificate({
+    InstrumentModel? instrument,
+    String? certificateId,
+    String? qrCode,
+    String? instrumentUniqueId,
+  }) async {
+    try {
+      final certRepo = ref.read(certificateRepositoryProvider);
+      CertificateModel? cert;
 
-    final certs = await certRepo.getCertificates();
+      // 1. Try by certificateId directly
+      final targetCertId = certificateId ?? instrument?.activeCertificateId;
+      if (targetCertId != null &&
+          targetCertId.isNotEmpty &&
+          targetCertId != 'Verified' &&
+          targetCertId != 'Issued') {
+        try {
+          cert = await certRepo.getCertificateById(targetCertId);
+        } catch (_) {}
+      }
 
-    final cert = certs.firstWhere(
-      (c) =>
-          c.instrumentId == instrument.id ||
-          c.instrumentUniqueId ==
-              instrument.instrumentId,
-      orElse: () => certs.first,
-    );
+      // 2. Try by application certificateId
+      if (cert == null) {
+        final targetInstId = instrument?.id;
+        final targetInstUniqueId = instrument?.instrumentId ?? instrumentUniqueId;
+        try {
+          final apps = ref.read(applicationsControllerProvider).applications;
+          final matchingApp = apps.cast<ApplicationModel?>().firstWhere(
+            (a) =>
+                (a?.certificateId != null && a!.certificateId!.isNotEmpty) &&
+                ((targetInstId != null && a.instrumentId == targetInstId) ||
+                    (targetInstUniqueId != null && a.instrumentUniqueId == targetInstUniqueId)),
+            orElse: () => null,
+          );
+          if (matchingApp?.certificateId != null) {
+            cert = await certRepo.getCertificateById(matchingApp!.certificateId!);
+          }
+        } catch (_) {}
+      }
 
-    if (mounted) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => CertificateViewScreen(
-            certificate: cert,
+      // 3. Try searching all certificates for this instrument
+      if (cert == null) {
+        try {
+          final certs = await certRepo.getCertificates();
+          final targetInstId = instrument?.id;
+          final targetInstUniqueId = instrument?.instrumentId ?? instrumentUniqueId;
+          final targetSerial = instrument?.serialNumber;
+          final targetQr = qrCode ?? instrument?.qrVerificationCode;
+
+          cert = certs.cast<CertificateModel?>().firstWhere(
+            (c) =>
+                (targetCertId != null && c?.id == targetCertId) ||
+                (targetInstId != null && c?.instrumentId == targetInstId) ||
+                (targetInstUniqueId != null && c?.instrumentUniqueId == targetInstUniqueId) ||
+                (targetSerial != null && c?.serialNumber == targetSerial) ||
+                (targetQr != null && c?.qrVerificationCode == targetQr),
+            orElse: () => null,
+          );
+        } catch (_) {}
+      }
+
+      // 4. Fallback: verifyPublicQr resolves/creates official live certificate model
+      if (cert == null) {
+        final token = qrCode ??
+            instrument?.qrVerificationCode ??
+            instrument?.instrumentId ??
+            instrumentUniqueId ??
+            '';
+        if (token.isNotEmpty) {
+          cert = await certRepo.verifyPublicQr(token);
+        }
+      }
+
+      if (cert != null && mounted) {
+        final currentUser = ref.read(authControllerProvider).user;
+        if (currentUser != null && currentUser.role == UserRole.owner) {
+          final isOwner = cert.ownerId == currentUser.id ||
+              cert.ownerName.trim().toLowerCase() == currentUser.name.trim().toLowerCase();
+          if (!isOwner) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                backgroundColor: AppColors.error,
+                content: Text('Access Denied: Certificate belongs to another establishment.'),
+              ),
+            );
+            return;
+          }
+        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => CertificateViewScreen(certificate: cert!),
           ),
-        ),
-      );
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppColors.warning,
+            content: Text('No active certificate found for ${instrument?.instrumentId ?? instrumentUniqueId ?? "equipment"}.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppColors.error,
+            content: Text('Error loading certificate: $e'),
+          ),
+        );
+      }
     }
+  }
+
+  void _showCertificateSelectionSheet(BuildContext context, List<CertificateModel> certs) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.card_membership, color: AppColors.primary),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Verified Digital Certificates',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      onPressed: () => Navigator.of(sheetCtx).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 300),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: certs.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final c = certs[index];
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryContainer,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.verified, color: AppColors.primary, size: 20),
+                        ),
+                        title: Text(
+                          c.instrumentType,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                        subtitle: Text(
+                          '${c.certificateNumber} • Valid until ${c.validUntil.toString().split(" ")[0]}',
+                          style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                        ),
+                        trailing: const Icon(Icons.chevron_right, size: 18),
+                        onTap: () {
+                          Navigator.of(sheetCtx).pop();
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => CertificateViewScreen(certificate: c)),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   // ============================================================
@@ -507,11 +1118,29 @@ class _OwnerDashboardScreenState
     final applicationsState =
         ref.watch(applicationsControllerProvider);
 
-    final instruments =
-        instrumentsState.instruments;
+    final user = authState.user;
 
-    final applications =
-        applicationsState.applications;
+    ref.listen<AuthState>(authControllerProvider, (prev, next) {
+      final nextUser = next.user;
+      if (nextUser != null && nextUser.id != _activeUserId) {
+        _activeUserId = nextUser.id;
+        ref
+            .read(instrumentsControllerProvider.notifier)
+            .loadInstruments(ownerId: nextUser.id);
+        ref
+            .read(applicationsControllerProvider.notifier)
+            .loadApplications(ownerId: nextUser.id);
+      }
+    });
+
+    // Always filter by logged-in owner so statewide data never pollutes owner screens
+    final instruments = user != null
+        ? instrumentsState.instruments.where((i) => i.ownerId == user.id).toList()
+        : instrumentsState.instruments;
+
+    final applications = user != null
+        ? applicationsState.applications.where((a) => a.ownerId == user.id).toList()
+        : applicationsState.applications;
 
     final totalInstruments =
         instruments.length;
@@ -573,21 +1202,11 @@ class _OwnerDashboardScreenState
             Expanded(
               child: RefreshIndicator(
                 onRefresh: () async {
-                  final user =
-                      ref
-                          .read(
-                            authControllerProvider,
-                          )
-                          .user;
-
-                  await ref
-                      .read(
-                        instrumentsControllerProvider
-                            .notifier,
-                      )
-                      .loadInstruments(
-                        ownerId: user?.id,
-                      );
+                  final user = ref.read(authControllerProvider).user;
+                  await Future.wait([
+                    ref.read(instrumentsControllerProvider.notifier).loadInstruments(ownerId: user?.id),
+                    ref.read(applicationsControllerProvider.notifier).loadApplications(ownerId: user?.id),
+                  ]);
                 },
 
                 child: SingleChildScrollView(
@@ -851,30 +1470,62 @@ class _OwnerDashboardScreenState
                                   .card_membership_outlined,
                               label:
                                   'View Certificates',
-                              onTap: () {
-                                final verified =
-                                    instruments.where(
-                                  (i) =>
-                                      i.status ==
-                                      InstrumentStatus
-                                          .verified,
-                                );
+                              onTap: () async {
+                                final certRepo = ref.read(certificateRepositoryProvider);
+                                final user = ref.read(authControllerProvider).user;
+                                if (user == null) return;
 
-                                if (verified
-                                    .isNotEmpty) {
-                                  _viewCertificate(
-                                    verified.first,
-                                  );
-                                } else {
-                                  ScaffoldMessenger
-                                      .of(context)
-                                      .showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        'No verified certificates issued yet.',
+                                var certs = await certRepo.getCertificates(ownerId: user.id);
+                                if (certs.isEmpty) {
+                                  final allCerts = await certRepo.getCertificates();
+                                  certs = allCerts.where((c) =>
+                                      c.ownerId == user.id ||
+                                      instruments.any((i) =>
+                                          i.ownerId == user.id &&
+                                          (i.id == c.instrumentId ||
+                                              i.instrumentId == c.instrumentUniqueId ||
+                                              (i.activeCertificateId != null && i.activeCertificateId == c.id)))).toList();
+                                }
+
+                                // Strict owner filtering: ensure only certificates belonging to this owner are listed
+                                final ownerCerts = certs.where((c) {
+                                  if (c.ownerId == user.id) return true;
+                                  return instruments.any((i) =>
+                                      i.ownerId == user.id &&
+                                      (i.id == c.instrumentId ||
+                                          i.instrumentId == c.instrumentUniqueId ||
+                                          (i.activeCertificateId != null && i.activeCertificateId == c.id)));
+                                }).toList();
+
+                                if (ownerCerts.isNotEmpty) {
+                                  if (ownerCerts.length == 1 && context.mounted) {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => CertificateViewScreen(certificate: ownerCerts.first),
                                       ),
-                                    ),
+                                    );
+                                  } else if (context.mounted) {
+                                    _showCertificateSelectionSheet(context, ownerCerts);
+                                  }
+                                } else {
+                                  var currentInsts = instruments;
+                                  if (currentInsts.isEmpty) {
+                                    try {
+                                      currentInsts = await ref.read(instrumentRepositoryProvider).getInstruments(ownerId: user.id);
+                                    } catch (_) {}
+                                  }
+                                  final verified = currentInsts.where(
+                                    (i) => (i.status == InstrumentStatus.verified || i.activeCertificateId != null) && i.ownerId == user.id,
                                   );
+                                  if (verified.isNotEmpty) {
+                                    _viewCertificate(instrument: verified.first);
+                                  } else if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('No verified certificates issued yet.'),
+                                      ),
+                                    );
+                                  }
                                 }
                               },
                             ),
@@ -882,11 +1533,12 @@ class _OwnerDashboardScreenState
                         ],
                       ),
 
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 20),
 
                       // ==================================================
                       // REGISTERED INSTRUMENTS
                       // ==================================================
+
 
                       Row(
                         mainAxisAlignment:
@@ -1043,10 +1695,11 @@ class _OwnerDashboardScreenState
                             final item =
                                 instruments[index];
 
-                            final isVerified =
-                                item.status ==
-                                    InstrumentStatus
-                                        .verified;
+                            final hasCertificate = item.status == InstrumentStatus.verified ||
+                                item.activeCertificateId != null ||
+                                applications.any((a) =>
+                                    (a.instrumentId == item.id || a.instrumentUniqueId == item.instrumentId) &&
+                                    a.status == ApplicationStatus.certificateIssued);
 
                             final canApply =
                                 item.status ==
@@ -1219,6 +1872,48 @@ class _OwnerDashboardScreenState
                                           MainAxisAlignment
                                               .end,
                                       children: [
+                                        OutlinedButton
+                                            .icon(
+                                          style:
+                                              OutlinedButton
+                                                  .styleFrom(
+                                            minimumSize:
+                                                const Size(
+                                              105,
+                                              34,
+                                            ),
+                                            padding:
+                                                const EdgeInsets
+                                                    .symmetric(
+                                              horizontal:
+                                                  8,
+                                            ),
+                                          ),
+                                          icon:
+                                              const Icon(
+                                            Icons
+                                                .qr_code_2,
+                                            size: 14,
+                                          ),
+                                          label:
+                                              const Text(
+                                            'Product QR',
+                                            style:
+                                                TextStyle(
+                                              fontSize:
+                                                  11,
+                                            ),
+                                          ),
+                                          onPressed: () =>
+                                              _showProductQrDialog(
+                                            item,
+                                          ),
+                                        ),
+
+                                        const SizedBox(
+                                          width: 8,
+                                        ),
+
                                         if (canApply)
                                           ElevatedButton
                                               .icon(
@@ -1227,7 +1922,7 @@ class _OwnerDashboardScreenState
                                                     .styleFrom(
                                               minimumSize:
                                                   const Size(
-                                                150,
+                                                140,
                                                 34,
                                               ),
                                               padding:
@@ -1257,7 +1952,7 @@ class _OwnerDashboardScreenState
                                             ),
                                           ),
 
-                                        if (isVerified)
+                                        if (hasCertificate)
                                           ...[
                                             const SizedBox(
                                               width: 8,
@@ -1282,7 +1977,7 @@ class _OwnerDashboardScreenState
                                               icon:
                                                   const Icon(
                                                 Icons
-                                                    .qr_code,
+                                                    .verified_outlined,
                                                 size: 14,
                                               ),
                                               label:
@@ -1294,10 +1989,20 @@ class _OwnerDashboardScreenState
                                                       11,
                                                 ),
                                               ),
-                                              onPressed: () =>
-                                                  _viewCertificate(
-                                                item,
-                                              ),
+                                              onPressed: () {
+                                                final matchingApp = applications.cast<ApplicationModel?>().firstWhere(
+                                                  (a) =>
+                                                      (a?.instrumentId == item.id || a?.instrumentUniqueId == item.instrumentId) &&
+                                                      a?.status == ApplicationStatus.certificateIssued,
+                                                  orElse: () => null,
+                                                );
+                                                _viewCertificate(
+                                                  instrument: item,
+                                                  certificateId: item.activeCertificateId ?? matchingApp?.certificateId,
+                                                  qrCode: item.qrVerificationCode,
+                                                  instrumentUniqueId: item.instrumentId,
+                                                );
+                                              },
                                             ),
                                           ],
                                       ],
@@ -1371,16 +2076,21 @@ class _StatCard extends StatelessWidget {
             mainAxisAlignment:
                 MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color:
-                      AppColors.textSecondary,
-                  fontWeight:
-                      FontWeight.w600,
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color:
+                        AppColors.textSecondary,
+                    fontWeight:
+                        FontWeight.w600,
+                  ),
                 ),
               ),
+              const SizedBox(width: 4),
               Icon(
                 icon,
                 size: 18,

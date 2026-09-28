@@ -57,11 +57,14 @@ class InstrumentsController extends StateNotifier<InstrumentsState> {
     }
   }
 
-  void updateInstrumentStatus(String instrumentId, InstrumentStatus newStatus) {
+  void updateInstrumentStatus(String instrumentId, InstrumentStatus newStatus, {String? certificateId}) {
     state = state.copyWith(
       instruments: state.instruments.map((i) {
         if (i.id == instrumentId || i.instrumentId == instrumentId) {
-          return i.copyWith(status: newStatus);
+          return i.copyWith(
+            status: newStatus,
+            activeCertificateId: certificateId ?? i.activeCertificateId,
+          );
         }
         return i;
       }).toList(),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_colors.dart';
@@ -7,6 +8,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/status_badge.dart';
 import '../../../../core/utils/date_formatter.dart';
 import '../../../../models/certificate_model.dart';
+import '../../../dashboard/presentation/screens/public_verification_screen.dart';
 
 class CertificateViewScreen extends StatelessWidget {
   final CertificateModel certificate;
@@ -107,11 +109,14 @@ class CertificateViewScreen extends StatelessWidget {
                   _CertRow(label: 'Manufacturer & Model', value: '${certificate.manufacturer} (${certificate.model})'),
                   _CertRow(label: 'Serial Number', value: certificate.serialNumber),
                   _CertRow(label: 'Max Capacity', value: '${certificate.capacity} ${certificate.unit}'),
+                  _CertRow(label: 'Owner ID', value: certificate.ownerId),
                   _CertRow(label: 'Owner / Establishment', value: certificate.ownerName),
                   _CertRow(label: 'Address', value: certificate.ownerAddress),
                   const Divider(height: 24),
 
                   _CertRow(label: 'Verification Date', value: DateFormatter.formatDate(certificate.verificationDate)),
+                  if (certificate.completionDate != null)
+                    _CertRow(label: 'Completion Date', value: DateFormatter.formatDate(certificate.completionDate!)),
                   _CertRow(
                     label: 'Valid Until',
                     value: DateFormatter.formatDate(certificate.validUntil),
@@ -119,7 +124,11 @@ class CertificateViewScreen extends StatelessWidget {
                     isBold: true,
                   ),
                   _CertRow(label: 'Verifying Officer', value: certificate.issuingOfficerName),
+                  if (certificate.approvedBy != null && certificate.approvedBy!.isNotEmpty)
+                    _CertRow(label: 'Approved By', value: certificate.approvedBy!),
                   _CertRow(label: 'Issuing Authority', value: certificate.issuingAuthority),
+                  if (certificate.approvalRemarks != null && certificate.approvalRemarks!.isNotEmpty)
+                    _CertRow(label: 'Approval Remarks', value: certificate.approvalRemarks!),
                   const Divider(height: 28),
 
                   // Scannable QR Code
@@ -150,9 +159,55 @@ class CertificateViewScreen extends StatelessWidget {
                           'Public Token: ${certificate.qrVerificationCode}',
                           style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.primary),
                         ),
+                        const SizedBox(height: 2),
                         const Text(
                           'Scan with any QR scanner to verify validity',
                           style: TextStyle(fontSize: 10, color: AppColors.textMuted),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size(0, 36),
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              ),
+                              icon: const Icon(Icons.copy, size: 14),
+                              label: const Text('Copy Token', style: TextStyle(fontSize: 11)),
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: certificate.qrVerificationCode));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: AppColors.primary,
+                                    content: Text('Copied token: ${certificate.qrVerificationCode}'),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                minimumSize: const Size(0, 36),
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: Colors.white,
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              ),
+                              icon: const Icon(Icons.verified_user, size: 14),
+                              label: const Text('Verify in Portal', style: TextStyle(fontSize: 11)),
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => PublicVerificationScreen(initialCode: certificate.qrVerificationCode),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
                         ),
                       ],
                     ),

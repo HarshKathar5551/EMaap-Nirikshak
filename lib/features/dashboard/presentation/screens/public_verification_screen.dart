@@ -9,21 +9,42 @@ import '../../../../core/network/providers.dart';
 import '../../../../core/utils/date_formatter.dart';
 import '../../../../models/certificate_model.dart';
 import '../../../../models/complaint_model.dart';
+import '../../../../models/instrument_model.dart';
+import 'package:image_picker/image_picker.dart';
+import '../../../../core/utils/qr_decoder.dart';
 import '../../../certificates/presentation/screens/certificate_view_screen.dart';
 import '../widgets/public_qr_scanner_dialog.dart';
 
 class PublicVerificationScreen extends ConsumerStatefulWidget {
-  const PublicVerificationScreen({super.key});
+  final String? initialCode;
+  const PublicVerificationScreen({super.key, this.initialCode});
 
   @override
   ConsumerState<PublicVerificationScreen> createState() => _PublicVerificationScreenState();
 }
 
 class _PublicVerificationScreenState extends ConsumerState<PublicVerificationScreen> {
-  final _searchController = TextEditingController(text: 'VERIFY-LM-8F92A71X');
+  late final TextEditingController _searchController;
   bool _isSearching = false;
   CertificateModel? _verifiedCertificate;
   bool _hasSearched = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController(text: widget.initialCode ?? '');
+    if (widget.initialCode != null && widget.initialCode!.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _verifyCode(widget.initialCode);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   Future<void> _verifyCode([String? codeToVerify]) async {
     final code = codeToVerify ?? _searchController.text.trim();
@@ -51,10 +72,51 @@ class _PublicVerificationScreenState extends ConsumerState<PublicVerificationScr
   }
 
   Future<void> _openScanner() async {
-    final scannedCode = await PublicQrScannerDialog.show(context);
-    if (scannedCode != null && scannedCode.isNotEmpty && mounted) {
-      _searchController.text = scannedCode;
-      _verifyCode(scannedCode);
+    // 1. Immediately launch camera on user tap gesture
+    try {
+      final picker = ImagePicker();
+      final photo = await picker.pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 85,
+      );
+
+      if (photo != null && mounted) {
+        final bytes = await photo.readAsBytes();
+        if (!mounted) return;
+        final decoded = QrDecoder.decodeFromBytes(bytes);
+
+        if (decoded != null && decoded.isNotEmpty) {
+          _searchController.text = decoded;
+          _verifyCode(decoded);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: AppColors.success,
+              content: Text('✓ Scanned QR Code: $decoded'),
+            ),
+          );
+          return;
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: AppColors.warning,
+              content: Text('No QR barcode detected in photo. Opening scanner options...'),
+            ),
+          );
+        }
+      }
+    } catch (_) {
+      // If native camera is unavailable or throws (e.g. desktop/permission), open scanner dialog
+    }
+
+    if (mounted) {
+      final scannedCode = await PublicQrScannerDialog.show(context, autoStartCamera: false);
+      if (scannedCode != null && scannedCode.isNotEmpty && mounted) {
+        _searchController.text = scannedCode;
+        _verifyCode(scannedCode);
+      }
     }
   }
 
@@ -211,15 +273,6 @@ class _PublicVerificationScreenState extends ConsumerState<PublicVerificationScr
         },
       ),
     );
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    // Auto-verify initial code for quick demonstration
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _verifyCode();
-    });
   }
 
   @override
@@ -412,36 +465,54 @@ class _PublicVerificationScreenState extends ConsumerState<PublicVerificationScr
                         ],
                       ),
                       const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: [
-                          const Text('Quick test codes:', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
-                          _ChipButton(
-                            label: '⚖️ Scale (Valid)',
-                            code: 'VERIFY-LM-8F92A71X',
-                            onTap: (c) {
-                              _searchController.text = c;
-                              _verifyCode(c);
-                            },
-                          ),
-                          _ChipButton(
-                            label: '⛽ Fuel Dispenser',
-                            code: 'VERIFY-LM-9B41C22Y',
-                            onTap: (c) {
-                              _searchController.text = c;
-                              _verifyCode(c);
-                            },
-                          ),
-                          _ChipButton(
-                            label: '🚛 Weighbridge (Expired)',
-                            code: 'VERIFY-LM-3D19E55Z',
-                            onTap: (c) {
-                              _searchController.text = c;
-                              _verifyCode(c);
-                            },
-                          ),
-                        ],
+                      FutureBuilder<List<InstrumentModel>>(
+                        future: ref.read(instrumentRepositoryProvider).getInstruments(),
+                        builder: (context, snapshot) {
+                          final instruments = snapshot.data ?? [];
+                          final sampleList = instruments.isNotEmpty
+                              ? instruments.take(6).toList()
+                              : <InstrumentModel>[];
+
+                          return Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: [
+                              const Text('Quick test codes:', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                              if (sampleList.isNotEmpty)
+                                ...sampleList.map((inst) {
+                                  final code = (inst.qrVerificationCode != null && inst.qrVerificationCode!.isNotEmpty)
+                                      ? inst.qrVerificationCode!
+                                      : 'VERIFY-LM-${inst.instrumentId.replaceAll('LM-IN-', '').replaceAll('-', '')}';
+                                  return _ChipButton(
+                                    label: '${inst.type.split(" ").first} (${inst.status.displayName})',
+                                    code: code,
+                                    onTap: (c) {
+                                      _searchController.text = c;
+                                      _verifyCode(c);
+                                    },
+                                  );
+                                })
+                              else ...[
+                                _ChipButton(
+                                  label: '⚖️ Scale (Valid)',
+                                  code: 'VERIFY-LM-8F92A71X',
+                                  onTap: (c) {
+                                    _searchController.text = c;
+                                    _verifyCode(c);
+                                  },
+                                ),
+                                _ChipButton(
+                                  label: '⛽ Fuel Dispenser',
+                                  code: 'VERIFY-LM-9B41C22Y',
+                                  onTap: (c) {
+                                    _searchController.text = c;
+                                    _verifyCode(c);
+                                  },
+                                ),
+                              ],
+                            ],
+                          );
+                        },
                       ),
                     ],
                   ),

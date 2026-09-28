@@ -1,58 +1,37 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/network/providers.dart';
+import '../../../../core/utils/qr_decoder.dart';
+import '../../../../models/instrument_model.dart';
+import '../../../../services/mock_data.dart';
 
-class PublicQrScannerDialog extends StatefulWidget {
-  const PublicQrScannerDialog({super.key});
+class PublicQrScannerDialog extends ConsumerStatefulWidget {
+  final bool autoStartCamera;
+  const PublicQrScannerDialog({super.key, this.autoStartCamera = true});
 
-  static Future<String?> show(BuildContext context) {
+  static Future<String?> show(BuildContext context, {bool autoStartCamera = true}) {
     return showDialog<String>(
       context: context,
       barrierDismissible: true,
-      builder: (context) => const PublicQrScannerDialog(),
+      builder: (context) => PublicQrScannerDialog(autoStartCamera: autoStartCamera),
     );
   }
 
   @override
-  State<PublicQrScannerDialog> createState() => _PublicQrScannerDialogState();
+  ConsumerState<PublicQrScannerDialog> createState() => _PublicQrScannerDialogState();
 }
 
-class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
+class _PublicQrScannerDialogState extends ConsumerState<PublicQrScannerDialog>
     with SingleTickerProviderStateMixin {
   late AnimationController _animController;
   late Animation<double> _laserAnimation;
   bool _isTorchOn = false;
   bool _isProcessing = false;
   final _manualInputController = TextEditingController();
-
-  final List<Map<String, String>> _sampleQrs = [
-    {
-      'label': '⚖️ Counter Scale (Verified)',
-      'code': 'VERIFY-LM-8F92A71X',
-      'detail': 'Avery India Class III • 30 kg',
-    },
-    {
-      'label': '⛽ Petrol Dispenser (Valid)',
-      'code': 'VERIFY-LM-9B41C22Y',
-      'detail': 'Gilbarco Horizon-H2 • 50 L/min',
-    },
-    {
-      'label': '🚛 Weighbridge (Expired)',
-      'code': 'VERIFY-LM-3D19E55Z',
-      'detail': 'Essae-Teraoka 60T • Expired',
-    },
-    {
-      'label': '🥛 Milk Volume Tank (Valid)',
-      'code': 'VERIFY-LM-2W55Q99R',
-      'detail': 'IDMC 1000L Storage Tank',
-    },
-    {
-      'label': '❌ Fake / Tampered QR',
-      'code': 'COUNTERFEIT-QR-INVALID',
-      'detail': 'Counterfeit Test Code',
-    },
-  ];
+  List<InstrumentModel> _registeredInstruments = [];
 
   @override
   void initState() {
@@ -65,6 +44,31 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
     _laserAnimation = Tween<double>(begin: 0.05, end: 0.95).animate(
       CurvedAnimation(parent: _animController, curve: Curves.easeInOut),
     );
+
+    _loadRegisteredInstruments();
+
+    if (widget.autoStartCamera) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _captureWithCamera();
+      });
+    }
+  }
+
+  Future<void> _loadRegisteredInstruments() async {
+    try {
+      final list = await ref.read(instrumentRepositoryProvider).getInstruments();
+      if (mounted && list.isNotEmpty) {
+        setState(() {
+          _registeredInstruments = list;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _registeredInstruments = MockData.instruments;
+        });
+      }
+    }
   }
 
   @override
@@ -77,7 +81,7 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
   void _onCodeDetected(String code) {
     HapticFeedback.mediumImpact();
     setState(() => _isProcessing = true);
-    Future.delayed(const Duration(milliseconds: 400), () {
+    Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) {
         Navigator.of(context).pop(code);
       }
@@ -89,35 +93,51 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
       final picker = ImagePicker();
       final photo = await picker.pickImage(
         source: ImageSource.camera,
-        maxWidth: 1280,
-        maxHeight: 1280,
+        preferredCameraDevice: CameraDevice.rear,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 90,
       );
 
       if (photo != null && mounted) {
-        // Provide immediate visual feedback that the QR photo was scanned
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Row(
-              children: [
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+        setState(() => _isProcessing = true);
+
+        final bytes = await photo.readAsBytes();
+        final decoded = QrDecoder.decodeFromBytes(bytes);
+
+        if (decoded != null && decoded.isNotEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                backgroundColor: AppColors.success,
+                content: Row(
+                  children: [
+                    const Icon(Icons.check_circle, color: Colors.white, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text('QR Detected: $decoded')),
+                  ],
                 ),
-                SizedBox(width: 12),
-                Text('Decoding QR code from camera image...'),
-              ],
-            ),
-            duration: Duration(milliseconds: 900),
-          ),
-        );
-        // Default to active instrument code when photo captured from physical label
-        _onCodeDetected('VERIFY-LM-8F92A71X');
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+          _onCodeDetected(decoded);
+        } else {
+          if (mounted) {
+            setState(() => _isProcessing = false);
+            _showQrNotFoundDialog();
+          }
+        }
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _isProcessing = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Camera access error: $e')),
+          SnackBar(
+            backgroundColor: AppColors.error,
+            content: Text('Camera could not be launched: $e\nTip: You can pick an image or select equipment below.'),
+            duration: const Duration(seconds: 4),
+          ),
         );
       }
     }
@@ -126,18 +146,45 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
   Future<void> _pickFromGallery() async {
     try {
       final picker = ImagePicker();
-      final image = await picker.pickImage(source: ImageSource.gallery);
+      final image = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 90,
+      );
       if (image != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('QR Sticker loaded from Gallery. Processing token...'),
-            duration: Duration(milliseconds: 800),
-          ),
-        );
-        _onCodeDetected('VERIFY-LM-9B41C22Y');
+        setState(() => _isProcessing = true);
+
+        final bytes = await image.readAsBytes();
+        final decoded = QrDecoder.decodeFromBytes(bytes);
+
+        if (decoded != null && decoded.isNotEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                backgroundColor: AppColors.success,
+                content: Row(
+                  children: [
+                    const Icon(Icons.check_circle, color: Colors.white, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text('QR Detected: $decoded')),
+                  ],
+                ),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+          _onCodeDetected(decoded);
+        } else {
+          if (mounted) {
+            setState(() => _isProcessing = false);
+            _showQrNotFoundDialog();
+          }
+        }
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _isProcessing = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Gallery access error: $e')),
         );
@@ -145,8 +192,99 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
     }
   }
 
+  void _showQrNotFoundDialog() {
+    final instruments = _registeredInstruments.isNotEmpty
+        ? _registeredInstruments
+        : MockData.instruments;
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.qr_code_scanner, color: AppColors.secondary, size: 24),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'QR Not Recognized',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'No barcode detected in the captured photo. For best results, place the camera 10–15 cm from the QR plaque.\n\nYou can also select the equipment directly from the registered list:',
+              style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 200),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: instruments.length,
+                separatorBuilder: (context, index) => const Divider(color: Colors.white12, height: 8),
+                itemBuilder: (context, i) {
+                  final inst = instruments[i];
+                  final code = (inst.qrVerificationCode != null && inst.qrVerificationCode!.isNotEmpty)
+                      ? inst.qrVerificationCode!
+                      : 'VERIFY-LM-${inst.instrumentId.replaceAll('LM-IN-', '').replaceAll('-', '')}';
+
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: const Icon(Icons.scale, color: AppColors.primaryLight, size: 20),
+                    title: Text(
+                      '${inst.type} (${inst.instrumentId})',
+                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      'Token: $code',
+                      style: const TextStyle(color: Colors.white54, fontSize: 10.5),
+                    ),
+                    trailing: const Icon(Icons.chevron_right, color: Colors.white38, size: 18),
+                    onTap: () {
+                      Navigator.of(dialogCtx).pop();
+                      _onCodeDetected(code);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: const Text('CANCEL', style: TextStyle(color: Colors.white60)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.of(dialogCtx).pop();
+              _captureWithCamera();
+            },
+            child: const Text('RETRY CAMERA'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final instruments = _registeredInstruments.isNotEmpty
+        ? _registeredInstruments
+        : MockData.instruments;
+
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
@@ -240,7 +378,6 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
                           child: Stack(
                             alignment: Alignment.center,
                             children: [
-                              // Subtle Camera Grid background
                               Positioned.fill(
                                 child: Opacity(
                                   opacity: 0.08,
@@ -274,7 +411,7 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
                                 child: _CornerBracket(isTop: false, isLeft: false),
                               ),
 
-                              // Center QR Target Icon / Simulation
+                              // Center QR Target Icon / Status
                               Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -387,9 +524,53 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
                           ),
                         ],
                       ),
+                      const SizedBox(height: 12),
+
+                      // Manual Entry Field
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _manualInputController,
+                              textCapitalization: TextCapitalization.characters,
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              decoration: InputDecoration(
+                                hintText: 'Or enter QR Token (e.g. VERIFY-LM-...)',
+                                hintStyle: const TextStyle(color: Colors.white38, fontSize: 11),
+                                filled: true,
+                                fillColor: Colors.white.withValues(alpha: 0.08),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              onSubmitted: (val) {
+                                if (val.trim().isNotEmpty) _onCodeDetected(val.trim());
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            onPressed: () {
+                              final text = _manualInputController.text.trim();
+                              if (text.isNotEmpty) _onCodeDetected(text);
+                            },
+                            child: const Text('Verify', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                          ),
+                        ],
+                      ),
                       const SizedBox(height: 16),
 
-                      // Quick Test Instrument QR Samples
+                      // Quick Test Equipment Chips with Actual Registered Instruments
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(12),
@@ -406,7 +587,7 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
                                 Icon(Icons.touch_app, size: 14, color: AppColors.secondary),
                                 SizedBox(width: 6),
                                 Text(
-                                  'Tap Sample Instrument Sticker to Simulate Scan:',
+                                  'Tap Registered Equipment to Simulate QR Scan:',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 11,
@@ -419,11 +600,56 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
                             Wrap(
                               spacing: 8,
                               runSpacing: 8,
-                              children: _sampleQrs.map((item) {
-                                return InkWell(
+                              children: [
+                                ...instruments.map((item) {
+                                  final code = (item.qrVerificationCode != null && item.qrVerificationCode!.isNotEmpty)
+                                      ? item.qrVerificationCode!
+                                      : 'VERIFY-LM-${item.instrumentId.replaceAll('LM-IN-', '').replaceAll('-', '')}';
+
+                                  return InkWell(
+                                    onTap: _isProcessing
+                                        ? null
+                                        : () => _onCodeDetected(code),
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF1E293B),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: AppColors.primaryLight.withValues(alpha: 0.4),
+                                        ),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '${item.type.split(" ").first} (${item.status.displayName})',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                          Text(
+                                            code,
+                                            style: const TextStyle(
+                                              color: Colors.white60,
+                                              fontSize: 9.5,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }),
+                                InkWell(
                                   onTap: _isProcessing
                                       ? null
-                                      : () => _onCodeDetected(item['code']!),
+                                      : () => _onCodeDetected('COUNTERFEIT-QR-INVALID'),
                                   borderRadius: BorderRadius.circular(8),
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
@@ -434,27 +660,23 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
                                       color: const Color(0xFF1E293B),
                                       borderRadius: BorderRadius.circular(8),
                                       border: Border.all(
-                                        color: item['code']!.startsWith('COUNTERFEIT')
-                                            ? AppColors.error.withValues(alpha: 0.6)
-                                            : AppColors.primaryLight.withValues(alpha: 0.4),
+                                        color: AppColors.error.withValues(alpha: 0.6),
                                       ),
                                     ),
-                                    child: Column(
+                                    child: const Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          item['label']!,
+                                          '❌ Fake / Tampered QR',
                                           style: TextStyle(
-                                            color: item['code']!.startsWith('COUNTERFEIT')
-                                                ? Colors.redAccent
-                                                : Colors.white,
+                                            color: Colors.redAccent,
                                             fontWeight: FontWeight.w700,
                                             fontSize: 11,
                                           ),
                                         ),
                                         Text(
-                                          item['detail']!,
-                                          style: const TextStyle(
+                                          'COUNTERFEIT-QR-INVALID',
+                                          style: TextStyle(
                                             color: Colors.white60,
                                             fontSize: 9.5,
                                           ),
@@ -462,8 +684,8 @@ class _PublicQrScannerDialogState extends State<PublicQrScannerDialog>
                                       ],
                                     ),
                                   ),
-                                );
-                              }).toList(),
+                                ),
+                              ],
                             ),
                           ],
                         ),

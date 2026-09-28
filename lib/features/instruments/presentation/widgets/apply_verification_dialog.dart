@@ -2,8 +2,10 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/network/providers.dart';
 import '../../../../models/instrument_model.dart';
 import '../../../../models/application_model.dart';
+import '../../../../models/inspection_model.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../applications/presentation/controllers/applications_controller.dart';
 import '../controllers/instruments_controller.dart';
@@ -62,6 +64,32 @@ class _ApplyVerificationDialogState extends ConsumerState<ApplyVerificationDialo
         .submitApplication(application);
 
     if (created != null) {
+      final inspRandom = 10000 + Random().nextInt(90000);
+      final inspection = InspectionModel(
+        id: 'insp-${created.id}',
+        inspectionId: 'LM-INS-${DateTime.now().year}-$inspRandom',
+        applicationId: appId,
+        instrumentId: widget.instrument.id,
+        instrumentUniqueId: widget.instrument.instrumentId,
+        instrumentType: widget.instrument.type,
+        officerId: officerId,
+        officerName: officerName,
+        scheduledDate: _preferredDate,
+        status: InspectionStatus.pending,
+        registeredLatitude: widget.instrument.latitude,
+        registeredLongitude: widget.instrument.longitude,
+        actualLatitude: widget.instrument.latitude,
+        actualLongitude: widget.instrument.longitude,
+        isLocationMatched: true,
+        distanceMeters: 4.8,
+        remarks: _remarksController.text.trim().isNotEmpty
+            ? _remarksController.text.trim()
+            : 'Verification inspection for ${widget.instrument.type}.',
+      );
+      try {
+        await ref.read(inspectionRepositoryProvider).createInspection(inspection);
+      } catch (_) {}
+
       ref.read(instrumentsControllerProvider.notifier).updateInstrumentStatus(
             widget.instrument.id,
             InstrumentStatus.assigned,

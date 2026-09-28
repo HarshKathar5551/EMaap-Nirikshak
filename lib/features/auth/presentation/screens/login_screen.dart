@@ -7,6 +7,9 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../models/user_model.dart';
 import '../controllers/auth_controller.dart';
 
+import '../../../instruments/presentation/controllers/instruments_controller.dart';
+import '../../../applications/presentation/controllers/applications_controller.dart';
+
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -71,6 +74,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (success && mounted) {
       final user = ref.read(authControllerProvider).user;
       if (user != null) {
+        if (user.role == UserRole.owner) {
+          await Future.wait([
+            ref.read(instrumentsControllerProvider.notifier).loadInstruments(ownerId: user.id),
+            ref.read(applicationsControllerProvider.notifier).loadApplications(ownerId: user.id),
+          ]);
+        }
+        if (!mounted) return;
         _routeByRole(user.role);
       }
     }
@@ -83,6 +93,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (success && mounted) {
       final user = ref.read(authControllerProvider).user;
       if (user != null) {
+        if (user.role == UserRole.owner) {
+          await Future.wait([
+            ref.read(instrumentsControllerProvider.notifier).loadInstruments(ownerId: user.id),
+            ref.read(applicationsControllerProvider.notifier).loadApplications(ownerId: user.id),
+          ]);
+        }
+        if (!mounted) return;
         _routeByRole(user.role);
       }
     }

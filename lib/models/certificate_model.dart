@@ -37,6 +37,7 @@ class CertificateModel {
   final String model;
   final double capacity;
   final String unit;
+  final String ownerId;
   final String ownerName;
   final String ownerAddress;
   final DateTime verificationDate;
@@ -48,6 +49,9 @@ class CertificateModel {
   final String sha256IntegrityHash;
   final CertificateStatus status;
   final String? remarks;
+  final DateTime? completionDate;
+  final String? approvedBy;
+  final String? approvalRemarks;
 
   const CertificateModel({
     required this.id,
@@ -60,6 +64,7 @@ class CertificateModel {
     required this.model,
     required this.capacity,
     required this.unit,
+    this.ownerId = 'usr-owner-01',
     required this.ownerName,
     required this.ownerAddress,
     required this.verificationDate,
@@ -71,6 +76,9 @@ class CertificateModel {
     required this.sha256IntegrityHash,
     required this.status,
     this.remarks,
+    this.completionDate,
+    this.approvedBy,
+    this.approvalRemarks,
   });
 
   bool get isExpired => validUntil.isBefore(DateTime.now());
@@ -87,6 +95,7 @@ class CertificateModel {
       model: json['model'] as String,
       capacity: (json['capacity'] as num).toDouble(),
       unit: json['unit'] as String,
+      ownerId: json['ownerId'] as String? ?? 'usr-owner-01',
       ownerName: json['ownerName'] as String,
       ownerAddress: json['ownerAddress'] as String,
       verificationDate: DateTime.parse(json['verificationDate'] as String),
@@ -98,6 +107,9 @@ class CertificateModel {
       sha256IntegrityHash: json['sha256IntegrityHash'] as String,
       status: CertificateStatus.fromString(json['status'] as String),
       remarks: json['remarks'] as String?,
+      completionDate: json['completionDate'] != null ? DateTime.parse(json['completionDate'] as String) : null,
+      approvedBy: json['approvedBy'] as String?,
+      approvalRemarks: json['approvalRemarks'] as String?,
     );
   }
 
@@ -113,6 +125,7 @@ class CertificateModel {
       'model': model,
       'capacity': capacity,
       'unit': unit,
+      'ownerId': ownerId,
       'ownerName': ownerName,
       'ownerAddress': ownerAddress,
       'verificationDate': verificationDate.toIso8601String(),
@@ -124,6 +137,9 @@ class CertificateModel {
       'sha256IntegrityHash': sha256IntegrityHash,
       'status': status.displayName,
       'remarks': remarks,
+      'completionDate': completionDate?.toIso8601String(),
+      'approvedBy': approvedBy,
+      'approvalRemarks': approvalRemarks,
     };
   }
 
@@ -138,6 +154,7 @@ class CertificateModel {
     String? model,
     double? capacity,
     String? unit,
+    String? ownerId,
     String? ownerName,
     String? ownerAddress,
     DateTime? verificationDate,
@@ -149,6 +166,9 @@ class CertificateModel {
     String? sha256IntegrityHash,
     CertificateStatus? status,
     String? remarks,
+    DateTime? completionDate,
+    String? approvedBy,
+    String? approvalRemarks,
   }) {
     return CertificateModel(
       id: id ?? this.id,
@@ -161,6 +181,7 @@ class CertificateModel {
       model: model ?? this.model,
       capacity: capacity ?? this.capacity,
       unit: unit ?? this.unit,
+      ownerId: ownerId ?? this.ownerId,
       ownerName: ownerName ?? this.ownerName,
       ownerAddress: ownerAddress ?? this.ownerAddress,
       verificationDate: verificationDate ?? this.verificationDate,
@@ -172,6 +193,9 @@ class CertificateModel {
       sha256IntegrityHash: sha256IntegrityHash ?? this.sha256IntegrityHash,
       status: status ?? this.status,
       remarks: remarks ?? this.remarks,
+      completionDate: completionDate ?? this.completionDate,
+      approvedBy: approvedBy ?? this.approvedBy,
+      approvalRemarks: approvalRemarks ?? this.approvalRemarks,
     );
   }
 }

@@ -61,11 +61,14 @@ class ApplicationsController extends StateNotifier<ApplicationsState> {
     }
   }
 
-  void updateApplicationStatus(String applicationId, ApplicationStatus newStatus) {
+  void updateApplicationStatus(String applicationId, ApplicationStatus newStatus, {String? certificateId}) {
     state = state.copyWith(
       applications: state.applications.map((a) {
         if (a.id == applicationId || a.applicationId == applicationId) {
-          return a.copyWith(status: newStatus);
+          return a.copyWith(
+            status: newStatus,
+            certificateId: certificateId ?? a.certificateId,
+          );
         }
         return a;
       }).toList(),

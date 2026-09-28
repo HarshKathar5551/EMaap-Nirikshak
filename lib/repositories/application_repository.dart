@@ -1,4 +1,5 @@
 import '../models/application_model.dart';
+import '../models/certificate_model.dart';
 import '../services/mock_api_service.dart';
 
 abstract class IApplicationRepository {
@@ -6,6 +7,10 @@ abstract class IApplicationRepository {
   Future<ApplicationModel> getApplicationById(String id);
   Future<ApplicationModel> submitApplication(ApplicationModel application);
   Future<ApplicationModel> assignOfficer(String applicationId, {String? officerId, String? officerName, String? gatcId, String? gatcName});
+  Future<ApplicationModel> reviewApplication(String applicationId, {String? remarks});
+  Future<ApplicationModel> approveApplication(String applicationId, {String? remarks});
+  Future<ApplicationModel> rejectApplication(String applicationId, {String? remarks});
+  Future<CertificateModel> issueCertificate(String applicationId, {String? remarks});
 }
 
 class ApplicationRepository implements IApplicationRepository {
@@ -31,5 +36,25 @@ class ApplicationRepository implements IApplicationRepository {
   @override
   Future<ApplicationModel> assignOfficer(String applicationId, {String? officerId, String? officerName, String? gatcId, String? gatcName}) {
     return _apiService.assignOfficer(applicationId, officerId: officerId, officerName: officerName, gatcId: gatcId, gatcName: gatcName);
+  }
+
+  @override
+  Future<ApplicationModel> reviewApplication(String applicationId, {String? remarks}) {
+    return _apiService.reviewApplication(applicationId, remarks: remarks);
+  }
+
+  @override
+  Future<ApplicationModel> approveApplication(String applicationId, {String? remarks}) {
+    return _apiService.approveApplication(applicationId, remarks: remarks);
+  }
+
+  @override
+  Future<ApplicationModel> rejectApplication(String applicationId, {String? remarks}) {
+    return _apiService.rejectApplication(applicationId, remarks: remarks);
+  }
+
+  @override
+  Future<CertificateModel> issueCertificate(String applicationId, {String? remarks}) {
+    return _apiService.issueCertificate(applicationId, remarks: remarks);
   }
 }

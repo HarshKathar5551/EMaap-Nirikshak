@@ -5,6 +5,7 @@ abstract class IInspectionRepository {
   Future<List<InspectionModel>> getInspections({String? officerId, String? status});
   Future<InspectionModel> getInspectionById(String id);
   Future<InspectionModel> completeInspection(String inspectionId, InspectionStatus status, {String? remarks, List<ChecklistItem>? checklist, List<MeasurementItem>? measurements});
+  Future<InspectionModel> createInspection(InspectionModel inspection);
 }
 
 class InspectionRepository implements IInspectionRepository {
@@ -25,5 +26,10 @@ class InspectionRepository implements IInspectionRepository {
   @override
   Future<InspectionModel> completeInspection(String inspectionId, InspectionStatus status, {String? remarks, List<ChecklistItem>? checklist, List<MeasurementItem>? measurements}) {
     return _apiService.completeInspection(inspectionId, status, remarks: remarks, checklist: checklist, measurements: measurements);
+  }
+
+  @override
+  Future<InspectionModel> createInspection(InspectionModel inspection) {
+    return _apiService.createInspection(inspection);
   }
 }

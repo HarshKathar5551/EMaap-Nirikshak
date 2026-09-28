@@ -2,7 +2,7 @@ import '../models/certificate_model.dart';
 import '../services/mock_api_service.dart';
 
 abstract class ICertificateRepository {
-  Future<List<CertificateModel>> getCertificates();
+  Future<List<CertificateModel>> getCertificates({String? ownerId});
   Future<CertificateModel> getCertificateById(String id);
   Future<CertificateModel> getCertificateByVerificationCode(String code);
   Future<CertificateModel?> verifyPublicQr(String code);
@@ -15,7 +15,8 @@ class CertificateRepository implements ICertificateRepository {
   CertificateRepository(this._apiService);
 
   @override
-  Future<List<CertificateModel>> getCertificates() => _apiService.getCertificates();
+  Future<List<CertificateModel>> getCertificates({String? ownerId}) =>
+      _apiService.getCertificates(ownerId: ownerId);
 
   @override
   Future<CertificateModel> getCertificateById(String id) => _apiService.getCertificateById(id);

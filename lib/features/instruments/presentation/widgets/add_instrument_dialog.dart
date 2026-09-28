@@ -5,8 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/network/providers.dart';
 import '../../../../models/instrument_model.dart';
+import '../../../../models/application_model.dart';
+import '../../../../models/inspection_model.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../../../applications/presentation/controllers/applications_controller.dart';
 import '../controllers/instruments_controller.dart';
 
 class AddInstrumentDialog extends ConsumerStatefulWidget {
@@ -527,7 +531,7 @@ class _AddInstrumentDialogState extends ConsumerState<AddInstrumentDialog> {
       status: InstrumentStatus.registered,
       registrationDate: DateTime.now(),
       photoUrls: photoPaths,
-      qrVerificationCode: 'VERIFY-LM-${_generateCode()}',
+      qrVerificationCode: 'VERIFY-LM-${instrumentId.replaceAll('LM-IN-', '').replaceAll('-', '')}-${_generateCode()}',
       riskLevel: 'LOW',
     );
 
@@ -536,18 +540,73 @@ class _AddInstrumentDialogState extends ConsumerState<AddInstrumentDialog> {
           .read(instrumentsControllerProvider.notifier)
           .registerInstrument(newInstrument);
 
-      if (mounted) {
-        setState(() => _isSubmitting = false);
-        if (created != null) {
-          Navigator.of(context).pop(created);
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              backgroundColor: AppColors.error,
-              content: Text('Could not register instrument. Please try again.'),
-            ),
+      if (created != null && mounted) {
+        // ── Auto-submit verification application to LMO ──────────────
+        try {
+          final appRandom = 10000 + Random().nextInt(90000);
+          final appId = 'LM-APP-${DateTime.now().year}-$appRandom';
+          final application = ApplicationModel(
+            id: 'app-${created.id}',
+            applicationId: appId,
+            instrumentId: created.id,
+            instrumentUniqueId: created.instrumentId,
+            instrumentType: created.type,
+            ownerId: created.ownerId,
+            ownerName: created.ownerName,
+            type: ApplicationType.newVerification,
+            status: ApplicationStatus.submitted,
+            submittedDate: DateTime.now(),
+            assignedOfficerId: 'usr-officer-01',
+            assignedOfficerName: 'Inspector Vikram Patil (LMO)',
+            feeAmount: 450.00,
+            feePaid: true,
+            remarks: 'Auto-submitted for Initial Verification after instrument registration.',
           );
+          await ref
+              .read(applicationsControllerProvider.notifier)
+              .submitApplication(application);
+
+          // Create assigned inspection for LMO field portal
+          final inspRandom = 10000 + Random().nextInt(90000);
+          final inspection = InspectionModel(
+            id: 'insp-${created.id}',
+            inspectionId: 'LM-INS-${DateTime.now().year}-$inspRandom',
+            applicationId: appId,
+            instrumentId: created.id,
+            instrumentUniqueId: created.instrumentId,
+            instrumentType: created.type,
+            officerId: 'usr-officer-01',
+            officerName: 'Inspector Vikram Patil',
+            scheduledDate: DateTime.now(),
+            status: InspectionStatus.pending,
+            registeredLatitude: created.latitude,
+            registeredLongitude: created.longitude,
+            actualLatitude: created.latitude,
+            actualLongitude: created.longitude,
+            isLocationMatched: true,
+            distanceMeters: 4.8,
+            remarks: 'Initial verification inspection for ${created.type}.',
+          );
+          await ref
+              .read(inspectionRepositoryProvider)
+              .createInspection(inspection);
+        } catch (_) {
+          // Non-fatal — application can be submitted separately
         }
+        // ─────────────────────────────────────────────────────────────
+
+        if (mounted) {
+          setState(() => _isSubmitting = false);
+          Navigator.of(context).pop(created);
+        }
+      } else if (mounted) {
+        setState(() => _isSubmitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: AppColors.error,
+            content: Text('Could not register instrument. Please try again.'),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -570,89 +629,107 @@ class _AddInstrumentDialogState extends ConsumerState<AddInstrumentDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
-    final dialogWidth = min(screenSize.width - 24.0, 560.0);
-    final dialogHeight = min(screenSize.height * 0.9, 740.0);
+    return LayoutBuilder(
+      builder: (context, outerConstraints) {
+        final screenW = MediaQuery.of(context).size.width;
+        final screenH = MediaQuery.of(context).size.height;
+        final dialogWidth = (screenW - 24.0).clamp(300.0, 560.0);
+        final dialogHeight = (screenH * 0.9).clamp(400.0, 740.0);
 
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
-      child: SizedBox(
-        width: dialogWidth,
-        height: dialogHeight,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-              decoration: const BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.app_registration, color: Colors.white, size: 22),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text(
-                      'Register Weighing / Measuring Instrument',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white70, size: 20),
-                    onPressed: () async {
-                      if (_formHasData) {
-                        final nav = Navigator.of(context);
-                        final discard = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Discard Registration?'),
-                            content: const Text('You have filled equipment data. Are you sure you want to discard?'),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep Editing')),
-                              ElevatedButton(
-                                style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text('Discard', style: TextStyle(color: Colors.white)),
-                              ),
-                            ],
+        return Dialog(
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16)),
+          clipBehavior: Clip.antiAlias,
+          child: SizedBox(
+            width: dialogWidth,
+            height: dialogHeight,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── Header ──────────────────────────────────────────
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 14),
+                  color: AppColors.primary,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.app_registration,
+                          color: Colors.white, size: 22),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Register Weighing / Measuring Instrument',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
                           ),
-                        );
-                        if (discard == true && mounted) {
-                          nav.pop();
-                        }
-                      } else {
-                        Navigator.of(context).pop();
-                      }
-                    },
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close,
+                            color: Colors.white70, size: 20),
+                        onPressed: () async {
+                          if (_formHasData) {
+                            final nav = Navigator.of(context);
+                            final discard = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text(
+                                    'Discard Registration?'),
+                                content: const Text(
+                                    'You have filled equipment data. Are you sure you want to discard?'),
+                                actions: [
+                                  TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(ctx, false),
+                                      child:
+                                          const Text('Keep Editing')),
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                        backgroundColor:
+                                            AppColors.error),
+                                    onPressed: () =>
+                                        Navigator.pop(ctx, true),
+                                    child: const Text('Discard',
+                                        style: TextStyle(
+                                            color: Colors.white)),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (discard == true && mounted) {
+                              nav.pop();
+                            }
+                          } else {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+
+                // ── Step indicator ───────────────────────────────────
+                _StepIndicator(currentStep: _currentStep),
+
+                // ── Step content ─────────────────────────────────────
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(20),
+                    child: _buildCurrentStep(),
+                  ),
+                ),
+
+                // ── Bottom navigation ────────────────────────────────
+                _buildBottomNav(),
+              ],
             ),
-
-            // Step indicators
-            _StepIndicator(currentStep: _currentStep),
-
-            // Step Content
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: _buildCurrentStep(),
-              ),
-            ),
-
-            // Bottom Navigation
-            _buildBottomNav(),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -1354,116 +1431,138 @@ class _AddInstrumentDialogState extends ConsumerState<AddInstrumentDialog> {
 
   Widget _buildBottomNav() {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: const BoxDecoration(
         color: Colors.white,
         border: Border(top: BorderSide(color: AppColors.border)),
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
+          // ── Left: Back or spacer ──────────────────────────────
           if (_currentStep > 0)
-            OutlinedButton.icon(
-              icon: const Icon(Icons.arrow_back, size: 16),
-              label: const Text('Back'),
-              onPressed: () => setState(() => _currentStep--),
+            Flexible(
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.arrow_back, size: 16),
+                label: const Text('Back'),
+                onPressed: () => setState(() => _currentStep--),
+              ),
             )
           else
             const SizedBox(width: 8),
+
+          const Spacer(),
+
+          // ── Right: Next or Submit ─────────────────────────────
           if (_currentStep < 2)
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: (_currentStep == 1 && !_locationCaptured)
-                    ? Colors.grey.shade400
-                    : AppColors.primary,
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              ),
-              icon: Icon(
-                _currentStep == 1 && !_locationCaptured
-                    ? Icons.lock_outline
-                    : Icons.arrow_forward,
-                size: 16,
-              ),
-              label: Text(
-                _currentStep == 0
-                    ? 'Next: Location'
-                    : (_locationCaptured ? 'Next: Photos' : 'Set Location to Proceed'),
-              ),
-              onPressed: () {
-                if (_currentStep == 0) {
-                  if (!_canProceedStep1) {
-                    _formKey.currentState?.validate();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Please fill the required specifications or tap Quick Fill.'),
-                      ),
-                    );
-                    return;
+            Flexible(
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      (_currentStep == 1 && !_locationCaptured)
+                          ? Colors.grey.shade400
+                          : AppColors.primary,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 18, vertical: 12),
+                ),
+                icon: Icon(
+                  _currentStep == 1 && !_locationCaptured
+                      ? Icons.lock_outline
+                      : Icons.arrow_forward,
+                  size: 16,
+                ),
+                label: Text(
+                  _currentStep == 0
+                      ? 'Next: Location'
+                      : (_locationCaptured
+                          ? 'Next: Photos'
+                          : 'Set Location to Proceed'),
+                ),
+                onPressed: () {
+                  if (_currentStep == 0) {
+                    if (!_canProceedStep1) {
+                      _formKey.currentState?.validate();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                              'Please fill the required specifications or tap Quick Fill.'),
+                        ),
+                      );
+                      return;
+                    }
                   }
-                }
-                if (_currentStep == 1) {
-                  if (!_locationCaptured) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        backgroundColor: AppColors.warning,
-                        content: Text('⚠️ Location required: Please enable and set location before proceeding.'),
-                      ),
-                    );
-                    _captureLocation();
-                    return;
+                  if (_currentStep == 1) {
+                    if (!_locationCaptured) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          backgroundColor: AppColors.warning,
+                          content: Text(
+                              '⚠️ Location required before proceeding.'),
+                        ),
+                      );
+                      _captureLocation();
+                      return;
+                    }
                   }
-                }
-                setState(() => _currentStep++);
-              },
+                  setState(() => _currentStep++);
+                },
+              ),
             )
           else
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: (_locationCaptured && _canProceedStep1)
-                    ? AppColors.success
-                    : Colors.grey.shade400,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            Flexible(
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      (_locationCaptured && _canProceedStep1)
+                          ? AppColors.success
+                          : Colors.grey.shade400,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 18, vertical: 12),
+                ),
+                icon: _isSubmitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : Icon(
+                        (_locationCaptured && _canProceedStep1)
+                            ? Icons.check_circle
+                            : Icons.lock_outline,
+                        size: 18,
+                      ),
+                label: const Text(
+                  'REGISTER INSTRUMENT',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                onPressed: _isSubmitting
+                    ? null
+                    : () {
+                        if (!_canProceedStep1) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              backgroundColor: AppColors.error,
+                              content: Text(
+                                  'Please complete the mandatory equipment specifications.'),
+                            ),
+                          );
+                          setState(() => _currentStep = 0);
+                          return;
+                        }
+                        if (!_locationCaptured) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              backgroundColor: AppColors.warning,
+                              content: Text(
+                                  '⚠️ Location required before registering.'),
+                            ),
+                          );
+                          setState(() => _currentStep = 1);
+                          return;
+                        }
+                        _handleSubmit();
+                      },
               ),
-              icon: _isSubmitting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : Icon(
-                      (_locationCaptured && _canProceedStep1) ? Icons.check_circle : Icons.lock_outline,
-                      size: 18,
-                    ),
-              label: const Text(
-                'REGISTER INSTRUMENT',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
-              onPressed: _isSubmitting
-                  ? null
-                  : () {
-                      if (!_canProceedStep1) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            backgroundColor: AppColors.error,
-                            content: Text('Please complete the mandatory equipment specifications.'),
-                          ),
-                        );
-                        setState(() => _currentStep = 0);
-                        return;
-                      }
-                      if (!_locationCaptured) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            backgroundColor: AppColors.warning,
-                            content: Text('⚠️ Location required: Please enable and set location before registering.'),
-                          ),
-                        );
-                        setState(() => _currentStep = 1);
-                        return;
-                      }
-                      _handleSubmit();
-                    },
             ),
         ],
       ),
